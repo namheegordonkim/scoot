@@ -1,0 +1,20 @@
+[workspace]
+authors = ["namheegordonkim <namhee.kim@aalto.fi>"]
+channels = ["conda-forge"]
+name = "scoot"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+download = "test -f 1s1a_precomputed.pth || gdown 1SMRuM_Opz9nGkf9LyjUhH3phZzRMH7_6 -O 1s1a_precomputed.pth; test -f 1s1a_landscape.png || gdown 1m_IVvrED9s-5ZvDjKKL_QtzPovN21vqY -O 1s1a_landscape.png"
+enjoy = { cmd = "python enjoy.py", depends-on = ["download"] }
+
+[dependencies]
+python = "3.11.*"
+
+[pypi-dependencies]
+imgui-bundle = ">=1.92.900, <2"
+torch = ">=2.14.0, <3"
+numpy = ">=2.4.6, <3"
+matplotlib = ">=3.11.2, <4"
+gdown = ">=6.4.0, <7"

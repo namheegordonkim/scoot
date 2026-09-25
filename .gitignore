@@ -1,0 +1,7 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# data, downloaded from Google Drive by `pixi run download`
+1s1a_precomputed.pth
+1s1a_landscape.png
