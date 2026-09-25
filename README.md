@@ -2,6 +2,8 @@
 
 This is the official codebase for https://namheegordonkim.github.io/scoot-mig2022/.
 
+![Billiards environment](assets/teaser.png)
+
 SCOOT (State-Conditioned Shooting) is a deep RL algorithm for high-risk, high-precision control problems, where each action has irreversible consequences and the reward landscape is made of sparse, sharp, multimodal ridges. Billiards is the running example. SCOOT builds on advantage-weighted regression (AWR) and adds three things:
 
 1. **Elite samples.** The policy is fitted only to replay-buffer samples whose advantage is positive, and those advantages are used directly as weights.
@@ -31,6 +33,8 @@ If the automatic download fails, download both files with the links above and pu
 
 # Using the optimizer
 
+![The interactive optimizer after a full SCOOT run with default settings](assets/gui.png)
+
 The left half has the controls and the learning curve. The right half shows the reward landscape, with state on the x-axis and action on the y-axis; dark blue marks high reward. On the landscape:
 
 - **Circles** are replay-buffer samples. Their color is the observed reward (Blues colormap), and their size is the sample's weight after the Weigh stage.
@@ -47,7 +51,7 @@ Each training iteration runs five stages:
 | **Weigh** | Compute a weight for each sample from its advantage r − V(s). SCOOT keeps only positive advantages; AWR uses exp(A / β); PPO uses normalized advantages. |
 | **Learn** | Update the policy by weighted maximum likelihood, plus the distance penalty for SCOOT. PPO uses its clipped surrogate and SAC its entropy-regularized actor loss. |
 
-You can step through one stage at a time with the stage buttons; only the next stage is enabled. **Run** executes stages continuously. **Stages / frame** sets the speed: 1 animates one stage per frame, and 5 is one full iteration per frame. **Max iterations** pauses training automatically.
+You can step through one stage at a time with the stage buttons; only the next stage is enabled. **Run** trains continuously. **Iterations / frame** sets the speed. **Max iterations** pauses training automatically.
 
 **Algorithm** selects a method and loads its default settings. AWR and SCOOT share one implementation, so SCOOT's features double as ablation switches:
 

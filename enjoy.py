@@ -20,6 +20,18 @@ def gui(app_state):
         app_state.__dict__.update(app_state.presets[app_state.algo])
     app_state.reset |= changed
     imgui.text_wrapped(app_state.descriptions[app_state.algo])
+    app_state.reset |= imgui.button("Reset")
+    imgui.same_line()
+    if imgui.button("Pause" if app_state.training else "Run"):
+        app_state.training = not app_state.training
+    app_state.stage_clicked = False
+    for index, name in enumerate(app_state.stage_names):
+        if index:
+            imgui.same_line()
+        imgui.begin_disabled(index != app_state.stage)
+        app_state.stage_clicked |= imgui.button(name)
+        imgui.end_disabled()
+    imgui.separator()
     changed, app_state.seed = imgui.slider_int("Seed", app_state.seed, 0, 100, flags=imgui.SliderFlags_.always_clamp)
     app_state.reset |= changed
     changed, app_state.n_samples = imgui.slider_int("Samples / iteration", app_state.n_samples, 16, 1024, flags=imgui.SliderFlags_.always_clamp)
@@ -59,17 +71,7 @@ def gui(app_state):
     imgui.text_wrapped("Every setting above resets and pauses, so one curve always comes from one configuration.")
 
     imgui.separator()
-    app_state.reset |= imgui.button("Reset")
-    imgui.same_line()
-    if imgui.button("Pause" if app_state.training else "Run"):
-        app_state.training = not app_state.training
-    app_state.stage_clicked = False
-    for index, name in enumerate(app_state.stage_names):
-        imgui.same_line()
-        imgui.begin_disabled(index != app_state.stage)
-        app_state.stage_clicked |= imgui.button(name)
-        imgui.end_disabled()
-    changed, app_state.stages_per_frame = imgui.slider_int("Stages / frame (5 = one iteration)", app_state.stages_per_frame, 1, 500, flags=imgui.SliderFlags_.logarithmic | imgui.SliderFlags_.always_clamp)
+    changed, app_state.iters_per_frame = imgui.slider_int("Iterations / frame", app_state.iters_per_frame, 1, 100, flags=imgui.SliderFlags_.logarithmic | imgui.SliderFlags_.always_clamp)
     changed, app_state.max_iters = imgui.slider_int("Max iterations", app_state.max_iters, 1, 10000, flags=imgui.SliderFlags_.always_clamp)
 
     if app_state.reset:
@@ -108,7 +110,8 @@ def gui(app_state):
         app_state.critic_optimizer = app_state.optimizer(app_state.critic.parameters(), lr=app_state.critic_lr)
         app_state.refresh = True
 
-    app_state.frame_stages = app_state.stages_per_frame if app_state.training else int(app_state.stage_clicked)
+    # Running finishes the current iteration first, so every frame ends on an iteration boundary.
+    app_state.frame_stages = 5 * app_state.iters_per_frame - app_state.stage if app_state.training else int(app_state.stage_clicked)
     for _ in range(app_state.frame_stages):
         app_state.learn_std = not app_state.curriculum or app_state.iteration >= app_state.std_start
         app_state.learn_gate = not app_state.curriculum or app_state.iteration >= app_state.gate_start
@@ -300,7 +303,7 @@ class AppState:
         self.std_start = 500
         self.gate_start = 3000
         self.max_iters = 3500
-        self.stages_per_frame = 5
+        self.iters_per_frame = 1
         self.stage_names = ["Sample", "Evaluate", "Fit critic", "Weigh", "Learn"]
         self.stage = 0
         self.training = False
