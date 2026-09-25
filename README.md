@@ -14,6 +14,14 @@ This repository contains a single-file interactive optimizer, `enjoy.py`. It run
 
 # One-click
 
+Prerequisite: install [Pixi](https://pixi.sh/latest/installation/) with its official installer:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+```
+
+Restart your terminal, then run this from the repository root:
+
 ```bash
 pixi run enjoy
 ```
@@ -61,7 +69,11 @@ You can step through one stage at a time with the stage buttons; only the next s
 - distance weight λ and overlap limit d;
 - curriculum, with its stage start iterations.
 
-With every feature off you get plain AWR. Changing any setting resets and pauses the run, so each learning curve comes from a single configuration.
+With every feature off you get plain AWR.
+
+**Optimizer** switches between Adam, RAdam and Muon. Each method's default is the one its source uses: RAdam for AWR and SCOOT (as in the paper), Adam for PPO and SAC. Muon follows the usual recipe: it updates only the hidden weight matrices, while Adam updates the input and output layers, biases and scalars. Muon's step is scaled to match Adam's RMS, so both use the same learning rate.
+
+Changing any setting resets and pauses the run, so each learning curve comes from a single configuration.
 
 ## Defaults
 

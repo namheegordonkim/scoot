@@ -42,6 +42,8 @@ def gui(app_state):
     app_state.reset |= changed
     changed, app_state.critic_lr = imgui.slider_float("Critic lr", app_state.critic_lr, 1e-6, 1e-2, "%.6f", imgui.SliderFlags_.logarithmic | imgui.SliderFlags_.always_clamp)
     app_state.reset |= changed
+    changed, app_state.optimizer = imgui.combo("Optimizer", app_state.optimizer, app_state.optimizers)
+    app_state.reset |= changed
     if app_state.algo >= 2:
         imgui.separator_text("SCOOT features (all off = AWR)")
         changed, app_state.elite = imgui.checkbox("Elite samples: keep A > 0, weight = A", app_state.elite)
@@ -105,9 +107,16 @@ def gui(app_state):
         app_state.log_std = nn.Parameter(torch.full((1,), app_state.init_log_std, device=app_state.device))
         app_state.log_alpha = nn.Parameter(torch.zeros(1, device=app_state.device))
         app_state.policy_parameters = [*app_state.actor.parameters(), *app_state.gate.parameters(), app_state.log_std, app_state.log_alpha]
-        app_state.optimizer = torch.optim.RAdam if app_state.algo >= 2 else torch.optim.Adam
-        app_state.policy_optimizer = app_state.optimizer(app_state.policy_parameters, lr=app_state.policy_lr)
-        app_state.critic_optimizer = app_state.optimizer(app_state.critic.parameters(), lr=app_state.critic_lr)
+        app_state.critic_parameters = [*app_state.critic.parameters()]
+        # Muon (Jordan et al. 2024) takes only the hidden weight matrices; input and output layers, biases and scalars stay on Adam.
+        app_state.muon_parameters = [net[2].weight for net in (app_state.actor, app_state.gate, *app_state.critic)] if app_state.optimizer == 2 else []
+        app_state.optimizer_class = torch.optim.RAdam if app_state.optimizer == 1 else torch.optim.Adam
+        app_state.policy_optimizers = [app_state.optimizer_class([p for p in app_state.policy_parameters if all(p is not m for m in app_state.muon_parameters)], lr=app_state.policy_lr)]
+        app_state.critic_optimizers = [app_state.optimizer_class([p for p in app_state.critic_parameters if all(p is not m for m in app_state.muon_parameters)], lr=app_state.critic_lr)]
+        if app_state.optimizer == 2:
+            # match_rms_adamw scales Muon's update to Adam's RMS, so both share one learning rate; no weight decay, like Adam.
+            app_state.policy_optimizers.append(torch.optim.Muon(app_state.muon_parameters[:2], lr=app_state.policy_lr, weight_decay=0, adjust_lr_fn="match_rms_adamw"))
+            app_state.critic_optimizers.append(torch.optim.Muon(app_state.muon_parameters[2:], lr=app_state.critic_lr, weight_decay=0, adjust_lr_fn="match_rms_adamw"))
         app_state.refresh = True
 
     # Running finishes the current iteration first, so every frame ends on an iteration boundary.
@@ -154,9 +163,11 @@ def gui(app_state):
                 app_state.minibatch = app_state.buffer[index]
                 # Returns equal rewards (gamma = 0), so critics regress r directly without target networks.
                 app_state.critic_loss = sum((critic(app_state.minibatch[:, [0, 2]] if app_state.algo == 1 else app_state.minibatch[:, :1]) - app_state.minibatch[:, 3:4]).square().mean() for critic in app_state.critic)
-                app_state.critic_optimizer.zero_grad()
+                for optimizer in app_state.critic_optimizers:
+                    optimizer.zero_grad()
                 app_state.critic_loss.backward()
-                app_state.critic_optimizer.step()
+                for optimizer in app_state.critic_optimizers:
+                    optimizer.step()
 
         elif app_state.stage == 3 and app_state.algo != 1:
             with torch.no_grad():
@@ -200,11 +211,13 @@ def gui(app_state):
                             # Eq. 6: penalize the closest pair of head means once they are within d stds.
                             app_state.gap = (app_state.means[:, :, None] - app_state.means[:, None, :]).abs().masked_fill(torch.eye(app_state.n_heads, dtype=torch.bool, device=app_state.device), float("inf")).amin((1, 2))
                             app_state.policy_loss = app_state.policy_loss + app_state.dist_weight * (1 - app_state.gap / (app_state.overlap * app_state.std)).clamp(min=0).mean()
-                app_state.policy_optimizer.zero_grad()
+                for optimizer in app_state.policy_optimizers:
+                    optimizer.zero_grad()
                 app_state.policy_loss.backward()
                 if app_state.algo == 0:
                     nn.utils.clip_grad_norm_(app_state.policy_parameters, 0.5)
-                app_state.policy_optimizer.step()
+                for optimizer in app_state.policy_optimizers:
+                    optimizer.step()
 
         app_state.stage = (app_state.stage + 1) % 5
         if app_state.stage == 0:
@@ -245,7 +258,7 @@ def gui(app_state):
         imgui.text(f"Samples with nonzero weight: {(app_state.weights > 0).float().mean().item():.3f}")
     if app_state.curve.shape[1]:
         imgui.text(f"Test return: {app_state.curve[1, -1]:.3f} (best {app_state.curve[1].max():.3f}) | test success rate: {app_state.curve[2, -1]:.3f}")
-    if implot.begin_plot("Learning curve", (-1, max(250, imgui.get_content_region_avail().y))):
+    if implot.begin_plot("Learning curve", (-1, max(200, imgui.get_content_region_avail().y))):
         implot.setup_axes("Samples", "Return", implot.AxisFlags_.auto_fit, implot.AxisFlags_.auto_fit)
         if app_state.curve.shape[1]:
             implot.plot_line("Test return (2048 fixed states, head means)", app_state.curve[0], app_state.curve[1])
@@ -281,11 +294,12 @@ class AppState:
         # 8.7M uniform shots: +-8192 neighbours by state cover about +-0.0019, far beyond the typical nearest distance (~0.0003).
         self.window = torch.arange(-8192, 8192, device=self.device)
         self.algos = ["PPO", "SAC", "AWR", "SCOOT"]
+        self.optimizers = ["Adam", "RAdam", "Muon + Adam"]
         self.presets = [
-            dict(policy_lr=3e-4, critic_lr=3e-4, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
-            dict(policy_lr=3e-4, critic_lr=3e-4, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
-            dict(policy_lr=1e-3, critic_lr=1e-5, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
-            dict(policy_lr=1e-3, critic_lr=1e-5, n_heads=4, elite=True, sobol_init=True, dist_weight=0.1, curriculum=True),
+            dict(optimizer=0, policy_lr=3e-4, critic_lr=3e-4, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
+            dict(optimizer=0, policy_lr=3e-4, critic_lr=3e-4, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
+            dict(optimizer=1, policy_lr=1e-3, critic_lr=1e-5, n_heads=1, elite=False, sobol_init=False, dist_weight=0.0, curriculum=False),
+            dict(optimizer=1, policy_lr=1e-3, critic_lr=1e-5, n_heads=4, elite=True, sobol_init=True, dist_weight=0.1, curriculum=True),
         ]
         self.descriptions = [
             "PPO (Schulman et al. 2017): on-policy clipped surrogate (0.2) on the current batch; advantage r - V(s), normalized; learned global std; Adam, 10 epochs x 64, grad clip 0.5. The critic is fit on the batch before advantages are computed.",
